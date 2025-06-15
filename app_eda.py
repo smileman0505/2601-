@@ -488,7 +488,7 @@ class EDA:
                 > - 오른쪽: 로그 변환 후 분포는 훨씬 균형잡힌 형태로, 중앙값 부근에 데이터가 집중됩니다.  
                 > - 극단치의 영향이 완화되어 이후 분석·모델링 안정성이 높아집니다.
                 """)
-        def load_and_preprocess(self, csv_file):
+    def load_and_preprocess(self, csv_file):
         # csv_file: UploadedFile 객체 또는 경로
         df = pd.read_csv(csv_file)
         # '-' -> NaN
