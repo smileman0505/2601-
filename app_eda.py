@@ -490,7 +490,7 @@ class EDA:
                 """)
     def load_and_preprocess(self, csv_file):
         # csv_file: UploadedFile 객체 또는 경로
-        df = pd.read_csv(population_trends.csv)
+        df = pd.read_csv(csv_file)
         # '-' -> NaN
         df = df.replace('-', np.nan)
         df['인구'] = pd.to_numeric(df['인구'], errors='coerce')
