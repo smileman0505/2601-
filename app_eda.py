@@ -488,24 +488,42 @@ class EDA:
                 > - 오른쪽: 로그 변환 후 분포는 훨씬 균형잡힌 형태로, 중앙값 부근에 데이터가 집중됩니다.  
                 > - 극단치의 영향이 완화되어 이후 분석·모델링 안정성이 높아집니다.
                 """)
-    def load_and_preprocess(self, csv_file):
-        # csv_file: UploadedFile 객체 또는 경로
-        df = pd.read_csv(csv_file)
-        # '-' -> NaN
+    def load_and_preprocess(self, source):
+        # 1) 입력이 이미 DataFrame인 경우 복사본으로 사용
+        if isinstance(source, pd.DataFrame):
+            df = source.copy()
+        else:
+            # pd.read_csv가 처리 가능한 경우 (UploadedFile, BytesIO, 경로 문자열 등)
+            df = pd.read_csv(source)
+
+        # 2) '-' 문자열을 NaN으로 치환
         df = df.replace('-', np.nan)
-        df['인구'] = pd.to_numeric(df['인구'], errors='coerce')
-        df['출생아수(명)'] = pd.to_numeric(df['출생아수(명)'], errors='coerce')
-        df['사망자수(명)'] = pd.to_numeric(df['사망자수(명)'], errors='coerce')
-        # '세종' 결측 0 처리
-        mask_sejong = df['지역'] == '세종'
+
+        # 3) 숫자 컬럼 변환: 존재할 때만
         for col in ['인구', '출생아수(명)', '사망자수(명)']:
-            df.loc[mask_sejong & df[col].isna(), col] = 0
-        # 필수 컬럼 연도·지역·인구 결측 제거
-        df = df.dropna(subset=['연도', '지역', '인구'], how='any').reset_index(drop=True)
-        # 나머지 결측 0 채움
-        df['출생아수(명)'] = df['출생아수(명)'].fillna(0)
-        df['사망자수(명)'] = df['사망자수(명)'].fillna(0)
-        df = df.sort_values(['지역', '연도']).reset_index(drop=True)
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # 4) '세종' 지역의 결측치 0 처리
+        if '지역' in df.columns:
+            mask_sejong = df['지역'] == '세종'
+            for col in ['인구', '출생아수(명)', '사망자수(명)']:
+                if col in df.columns:
+                    df.loc[mask_sejong & df[col].isna(), col] = 0
+
+        # 5) 필수 컬럼('연도', '지역', '인구') 중 결측 있는 행 제거
+        if all(c in df.columns for c in ['연도', '지역', '인구']):
+            df = df.dropna(subset=['연도', '지역', '인구'], how='any').reset_index(drop=True)
+
+        # 6) 나머지 결측 0 채움
+        for col in ['출생아수(명)', '사망자수(명)']:
+            if col in df.columns:
+                df[col] = df[col].fillna(0)
+
+        # 7) '지역', '연도' 순으로 정렬
+        if all(c in df.columns for c in ['지역', '연도']):
+            df = df.sort_values(['지역', '연도']).reset_index(drop=True)
+
         return df
 
     def population_trends(self):
@@ -514,16 +532,25 @@ class EDA:
         if not uploaded:
             st.info("population_trends.csv 파일을 업로드 해주세요.")
             return
-        df_raw = pd.read_csv(uploaded) # 전처리 전 원본
+        try:
+            df_raw = pd.read_csv(uploaded)
+        except Exception as e:
+            st.error("CSV 파일을 읽는 중 오류가 발생했습니다.")
+            st.error(e)
+            return
 
         missing_raw = {}
         for col in df_raw.columns:
             # '-' 이외에도 빈 문자열('') 등을 결측 표기로 쓰었다면 조건에 추가 가능
             cnt_dash = (df_raw[col] == '-').sum()
             missing_raw[col] = int(cnt_dash)
-
-            
-        df = self.load_and_preprocess(uploaded)
+        
+        try:
+            df = self.load_and_preprocess(df_raw)
+        except Exception as e:
+            st.error("전처리 과정에서 오류가 발생했습니다.")
+            st.error(e)
+            return
 
         # 탭 구성
         tab_basic, tab_year, tab_region, tab_change, tab_vis = st.tabs(
@@ -534,37 +561,36 @@ class EDA:
         with tab_basic:
             st.subheader("Basic Statistics and Data Info")
 
+        # 1) Shape & Dtype & Non-null after preprocess
+        st.write("Shape:", df.shape)
+        info = pd.DataFrame({
+            'Column': df.columns,
+            'Dtype': df.dtypes.astype(str),
+            'Non-null count (after preprocess)': [df[col].notna().sum() for col in df.columns]
+        })
+        st.dataframe(info)
 
-             # 1) Shape & Dtype & Non-null after preprocess
-            st.write("Shape:", df.shape)
-            info = pd.DataFrame({
-                'Column': df.columns,
-                'Dtype': df.dtypes.astype(str),
-                'Non-null count (after preprocess)': [df[col].notna().sum() for col in df.columns]
-            })
-            st.dataframe(info)
+        # 2) 원본 '-' 결측 정보 출력
+        st.markdown("**Original missing indicators** (count of '-' before preprocessing):")
+        missing_raw_df = pd.DataFrame({
+            'Column': list(missing_raw.keys()),
+            "Count of '-'": list(missing_raw.values())
+        })
+        st.dataframe(missing_raw_df)
 
-            # 2) 원본 '-' 결측 정보 출력
-            st.markdown("**Original missing indicators** (count of '-' before preprocessing):")
-            missing_raw_df = pd.DataFrame({
-                'Column': list(missing_raw.keys()),
-                "Count of '-'": list(missing_raw.values())
-            })
-            st.dataframe(missing_raw_df)
+        # 3) 기술 통계량 (전처리 후 numeric 컬럼)
+        st.markdown("**Descriptive statistics (numeric columns after preprocess)**")
+        numeric_cols = [c for c in ['연도', '인구', '출생아수(명)', '사망자수(명)'] if c in df.columns]
+        if numeric_cols:
+            st.dataframe(df[numeric_cols].describe())
+        else:
+            st.write("No numeric columns for descriptive stats.")
 
-            # 3) 기술 통계량 (전처리 후 numeric 컬럼)
-            st.markdown("**Descriptive statistics (numeric columns after preprocess)**")
-            numeric_cols = [c for c in ['연도', '인구', '출생아수(명)', '사망자수(명)'] if c in df.columns]
-            if numeric_cols:
-                st.dataframe(df[numeric_cols].describe())
-            else:
-                st.write("No numeric columns for descriptive stats.")
-
-            # 4) 전처리 후 실제 결측 & 중복 개수
-            st.markdown("**Missing & Duplicates after preprocessing**")
-            st.write("Missing values per column (after preprocess):")
-            st.write(df.isna().sum())
-            st.write("Duplicate rows count:", df.duplicated().sum())
+        # 4) 전처리 후 실제 결측 & 중복 개수
+        st.markdown("**Missing & Duplicates after preprocessing**")
+        st.write("Missing values per column (after preprocess):")
+        st.write(df.isna().sum())
+        st.write("Duplicate rows count:", df.duplicated().sum())
 
         # --- Year Trend ---
         with tab_year:
