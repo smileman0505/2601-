@@ -514,6 +514,15 @@ class EDA:
         if not uploaded:
             st.info("population_trends.csv 파일을 업로드 해주세요.")
             return
+        df_raw = pd.read_csv(uploaded) # 전처리 전 원본
+
+        missing_raw = {}
+        for col in df_raw.columns:
+            # '-' 이외에도 빈 문자열('') 등을 결측 표기로 쓰었다면 조건에 추가 가능
+            cnt_dash = (df_raw[col] == '-').sum()
+            missing_raw[col] = int(cnt_dash)
+
+            
         df = self.load_and_preprocess(uploaded)
 
         # 탭 구성
@@ -524,16 +533,36 @@ class EDA:
         # --- Basic Stats ---
         with tab_basic:
             st.subheader("Basic Statistics and Data Info")
+
+
+             # 1) Shape & Dtype & Non-null after preprocess
             st.write("Shape:", df.shape)
             info = pd.DataFrame({
                 'Column': df.columns,
                 'Dtype': df.dtypes.astype(str),
-                'Non-null count': [df[col].notna().sum() for col in df.columns]
+                'Non-null count (after preprocess)': [df[col].notna().sum() for col in df.columns]
             })
             st.dataframe(info)
-            st.write("Descriptive statistics:")
-            st.dataframe(df[['연도', '인구', '출생아수(명)', '사망자수(명)']].describe())
-            st.write("Missing values per column:")
+
+            # 2) 원본 '-' 결측 정보 출력
+            st.markdown("**Original missing indicators** (count of '-' before preprocessing):")
+            missing_raw_df = pd.DataFrame({
+                'Column': list(missing_raw.keys()),
+                "Count of '-'": list(missing_raw.values())
+            })
+            st.dataframe(missing_raw_df)
+
+            # 3) 기술 통계량 (전처리 후 numeric 컬럼)
+            st.markdown("**Descriptive statistics (numeric columns after preprocess)**")
+            numeric_cols = [c for c in ['연도', '인구', '출생아수(명)', '사망자수(명)'] if c in df.columns]
+            if numeric_cols:
+                st.dataframe(df[numeric_cols].describe())
+            else:
+                st.write("No numeric columns for descriptive stats.")
+
+            # 4) 전처리 후 실제 결측 & 중복 개수
+            st.markdown("**Missing & Duplicates after preprocessing**")
+            st.write("Missing values per column (after preprocess):")
             st.write(df.isna().sum())
             st.write("Duplicate rows count:", df.duplicated().sum())
 
